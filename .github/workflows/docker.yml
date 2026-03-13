@@ -6,6 +6,17 @@ on:
       - main
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '镜像标签 (默认为 latest)'
+        required: false
+        default: 'latest'
+      push_to_ghcr:
+        description: '推送到 GitHub Container Registry'
+        required: false
+        default: true
+        type: boolean
 
 env:
   IMAGE_NAME: z-ai2api-python
@@ -50,8 +61,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.event.inputs.tag || 'latest' }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -62,3 +75,31 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Generate image summary
+        if: always()
+        run: |
+          echo "## 🐳 Docker 镜像构建摘要" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 项目 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| **仓库** | ${{ github.repository }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **触发方式** | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **镜像名称** | ${{ env.IMAGE_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **标签** | ${{ steps.meta.outputs.tags || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **平台** | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "### ✅ 镜像推送成功" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**GitHub Container Registry:**" >> $GITHUB_STEP_SUMMARY
+            echo "- \`ghcr.io/${{ github.repository }}:${{ github.event.inputs.tag || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+            if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Docker Hub:**" >> $GITHUB_STEP_SUMMARY
+              echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "### ❌ 构建失败" >> $GITHUB_STEP_SUMMARY
+          fi
